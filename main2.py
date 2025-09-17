@@ -12,7 +12,6 @@ from kivy.animation import Animation
 from kivy.core.window import Window
 from kivy.metrics import dp
 
-# Movimientos del caballo (dx, dy)
 MOVIMIENTOS_CABALLO = [(2, 1), (1, 2), (-1, 2), (-2, 1),
                        (-2, -1), (-1, -2), (1, -2), (2, -1)]
 
@@ -24,9 +23,10 @@ class BoardWidget(Widget):
         self.labels = []
         self.valid_moves = []
         self.visited = set()
-        self.movimiento_actual = 0
+        self.movimiento_actual = 1  # empieza en 1
         self.pos_x = 0
         self.pos_y = 0
+        self.historial_movimientos = [(self.pos_x, self.pos_y)]
 
         self.palette_dark = {
             "background": (0.06, 0.06, 0.06, 1),
@@ -48,7 +48,6 @@ class BoardWidget(Widget):
         self.colors = self.palette_dark
         Window.clearcolor = self.colors["background"]
 
-        # inicializar tablero y labels
         self.rebuild_board()
 
         self.bind(size=self._update_board, pos=self._update_board)
@@ -149,6 +148,7 @@ class BoardWidget(Widget):
             self.movimiento_actual += 1
             self.tablero[row][col] = self.movimiento_actual
             self.visited.add((col, row))
+            self.historial_movimientos.append((self.pos_x, self.pos_y))  # Guardar la posición actual antes de mover
             self.animate_knight_to(col, row)
         else:
             self.show_popup("Movimiento inválido", "No puedes mover ahí.")
@@ -170,6 +170,9 @@ class BoardWidget(Widget):
             self.compute_valid_moves()
             self._update_board()
             total = self.nivel * self.nivel
+            # Activar/desactivar botón deshacer según historial
+            if hasattr(self.parent, "btn_deshacer"):
+                self.parent.btn_deshacer.disabled = len(self.historial_movimientos) <= 1
             if self.movimiento_actual == total:
                 self.show_level_completed()
             elif not self.valid_moves:
@@ -177,6 +180,24 @@ class BoardWidget(Widget):
 
         anim.bind(on_complete=_on_complete)
         anim.start(self.knight)
+
+    def deshacer_movimiento(self):
+        if len(self.historial_movimientos) <= 1:
+            return  # No hay dónde deshacer
+
+        # Eliminar último movimiento actual
+        last_pos = self.historial_movimientos.pop()
+        # Limpiar casilla actual
+        self.tablero[self.pos_y][self.pos_x] = -1
+        self.movimiento_actual -= 1
+        # Volver a la posición anterior
+        self.pos_x, self.pos_y = last_pos
+        self.compute_valid_moves()
+        self._update_board()
+
+        # Activar/desactivar botón deshacer según historial
+        if hasattr(self.parent, "btn_deshacer"):
+            self.parent.btn_deshacer.disabled = len(self.historial_movimientos) <= 1
 
     def show_popup(self, title, message):
         content = BoxLayout(orientation="vertical", padding=dp(8), spacing=dp(8))
@@ -227,7 +248,6 @@ class BoardWidget(Widget):
     def rebuild_board(self, nivel=None):
         if nivel is not None:
             self.nivel = nivel
-        # eliminar widgets hijos existentes para labels y knight
         for child in list(self.children):
             if isinstance(child, Label) or isinstance(child, Image):
                 self.remove_widget(child)
@@ -238,6 +258,7 @@ class BoardWidget(Widget):
         self.pos_y = 0
         self.tablero[self.pos_y][self.pos_x] = 1
         self.visited = {(self.pos_x, self.pos_y)}
+        self.historial_movimientos = [(self.pos_x, self.pos_y)]
 
         for _ in range(self.nivel * self.nivel):
             lbl = Label(text="", halign="center", valign="middle", size_hint=(None, None))
@@ -256,6 +277,9 @@ class BoardWidget(Widget):
 
         self.compute_valid_moves()
         self._update_board()
+        # Deshabilitar botón deshacer tras reinicio
+        if hasattr(self.parent, "btn_deshacer"):
+            self.parent.btn_deshacer.disabled = True
 
 class GameRoot(BoxLayout):
     def __init__(self, **kwargs):
@@ -263,8 +287,12 @@ class GameRoot(BoxLayout):
         topbar = BoxLayout(size_hint=(1, None), height=dp(56), padding=dp(6), spacing=dp(6))
         self.btn_reiniciar = Button(text="🔄 Reiniciar nivel", size_hint=(None, 1), width=dp(160))
         self.btn_modo = Button(text="🌙 Modo Claro", size_hint=(None, 1), width=dp(160))
+        self.btn_deshacer = Button(text="↩️ Deshacer", size_hint=(None, 1), width=dp(120))
+        self.btn_deshacer.disabled = True
+        
         topbar.add_widget(self.btn_reiniciar)
         topbar.add_widget(self.btn_modo)
+        topbar.add_widget(self.btn_deshacer)
         topbar.add_widget(Widget())  # filler
 
         self.add_widget(topbar)
@@ -274,6 +302,7 @@ class GameRoot(BoxLayout):
 
         self.btn_reiniciar.bind(on_release=lambda *_: self.board.rebuild_board())
         self.btn_modo.bind(on_release=self.toggle_mode)
+        self.btn_deshacer.bind(on_release=lambda *_: self.board.deshacer_movimiento())
 
         self.board.set_mode("dark")
 
