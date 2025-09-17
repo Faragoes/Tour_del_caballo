@@ -11,27 +11,33 @@ from kivy.graphics import Color, Rectangle, Line
 from kivy.animation import Animation
 from kivy.core.window import Window
 from kivy.metrics import dp
+from kivy.uix.widget import Widget
+
 
 # Movimientos del caballo (dx, dy)
 MOVIMIENTOS_CABALLO = [(2, 1), (1, 2), (-1, 2), (-2, 1),
                        (-2, -1), (-1, -2), (1, -2), (2, -1)]
 
-
 class BoardWidget(Widget):
     def __init__(self, nivel=5, **kwargs):
         super().__init__(**kwargs)
         self.nivel = nivel  # empieza en 5
-        self.board_size = 0
         self.cell_size = 0
+        self.labels = []
+        self.valid_moves = []
+        self.visited = set()
+        self.movimiento_actual = 0
+        self.pos_x = 0
+        self.pos_y = 0
 
-        # paletas de color CORREGIDAS para que texto y visited se vean correctamente
+        # paletas de color para que texto y visitado se vean correctamente
         self.palette_dark = {
             "background": (0.06, 0.06, 0.06, 1),
             "cell_light": (0.20, 0.20, 0.20, 1),  # casilla clara en modo oscuro (gris oscuro)
             "cell_dark": (0.10, 0.10, 0.10, 1),   # casilla oscura en modo oscuro
             "visited": (0.22, 0.45, 0.22, 1),     # verde para visitadas
             "highlight": (1, 0.85, 0.0, 1),       # amarillo para pistas
-            "text": (1, 1, 1, 1)                  # texto blanco en modo oscuro
+            "text": (1, 1, 1, 1)                   # texto blanco en modo oscuro
         }
         self.palette_light = {
             "background": (0.95, 0.95, 0.95, 1),
@@ -39,115 +45,67 @@ class BoardWidget(Widget):
             "cell_dark": (0.78, 0.78, 0.78, 1),   # gris claro
             "visited": (0.55, 0.75, 0.55, 1),     # verde claro
             "highlight": (1, 0.6, 0.0, 1),        # naranja para pistas
-            "text": (0, 0, 0, 1)                  # texto negro en modo claro
+            "text": (0, 0, 0, 1)                   # texto negro en modo claro
         }
-        # por defecto modo oscuro
         self.mode = "dark"
         self.colors = self.palette_dark
         Window.clearcolor = self.colors["background"]
 
-        # estado del juego
-        self.tablero = []
-        self.movimiento_actual = 0  # número actual (empezamos en 0)
-        self.pos_x = 0  # columna lógica (x)
-        self.pos_y = 0  # fila lógica (y), 0 = fila superior
-        self.visited = set()
-        self.valid_moves = []
-        self.labels = []  # Labels para mostrar números en cada celda
-        self.board_origin = (0, 0)
+        # tablero inicial
+        self.tablero = [[-1 for _ in range(self.nivel)] for _ in range(self.nivel)]
+        self.tablero[self.pos_y][self.pos_x] = 0
+        self.visited.add((self.pos_x, self.pos_y))
 
-        # imagen del caballo: usar ruta absoluta; fallback a Label si no existe
+        # crear Labels para números y añadirlos como hijos
+        for _ in range(self.nivel * self.nivel):
+            lbl = Label(text="", halign="center", valign="middle", size_hint=(None, None))
+            lbl.bind(size=lambda inst, val: setattr(inst, "text_size", (inst.width, inst.height)))
+            self.add_widget(lbl)
+            self.labels.append(lbl)
+
+        # imagen caballo o símbolo ♞
         ruta = os.path.abspath("caballo.png")
         if os.path.exists(ruta):
             self.knight = Image(source=ruta, allow_stretch=True, keep_ratio=True, size_hint=(None, None))
         else:
-            # fallback: símbolo caballo (se ve siempre)
-            self.knight = Label(text="♞", font_size=dp(32), size_hint=(None, None))
+            self.knight = Label(text="♞", font_size=dp(32), size_hint=(None, None), bold=True)
+        self.knight.size = (dp(40), dp(40))
+        self.add_widget(self.knight)
 
-        # construir tablero inicial
-        self.rebuild_board()
-
-        # actualizar cuando cambia tamaño/pos del widget (redimensionar ventana)
+        # actualizar tamaño y posición con cambios tamaño/pos
         self.bind(size=self._update_board, pos=self._update_board)
 
-    def set_mode(self, mode):
-        # Cambia paleta y actualiza visual; garantiza que labels y knight se actualicen
-        self.mode = mode
-        self.colors = self.palette_light if mode == "light" else self.palette_dark
-        Window.clearcolor = self.colors["background"]
-
-        # actualizar color de texto de las labels YA existentes
-        for lbl in self.labels:
-            lbl.color = self.colors["text"]
-
-        # reañadir el knight al final para asegurar que quede por encima
-        if self.knight.parent:
-            try:
-                self.remove_widget(self.knight)
-            except Exception:
-                pass
-        self.add_widget(self.knight)
-
-        # forzar recálculo y repintado
-        self._update_board()
-
-    def rebuild_board(self):
-        # eliminar labels antiguos
-        for lbl in list(self.labels):
-            if lbl.parent:
-                self.remove_widget(lbl)
-        self.labels = []
-
-        # inicializar estructura del tablero
-        self.tablero = [[-1 for _ in range(self.nivel)] for _ in range(self.nivel)]
-        self.movimiento_actual = 0
-        self.pos_x = 0
-        self.pos_y = 0
-        self.tablero[self.pos_y][self.pos_x] = 0
-        self.visited = {(self.pos_x, self.pos_y)}
-
-        # crear Labels (texto centrado) por cada casilla y añadirlos
-        for r in range(self.nivel):
-            for c in range(self.nivel):
-                lbl = Label(text="", halign="center", valign="middle", size_hint=(None, None))
-                lbl.bind(size=lambda inst, val: setattr(inst, "text_size", (inst.width, inst.height)))
-                # asignar color inicial según paleta actual
-                lbl.color = self.colors["text"]
-                self.labels.append(lbl)
-                self.add_widget(lbl)
-
-        # asegurar que el knight esté añadido al final (por encima de labels)
-        if self.knight.parent:
-            try:
-                self.remove_widget(self.knight)
-            except Exception:
-                pass
-        self.add_widget(self.knight)
-
-        # calcular movimientos iniciales y dibujar
         self.compute_valid_moves()
         self._update_board()
 
+    def set_mode(self, mode):
+        self.mode = mode
+        self.colors = self.palette_light if mode == "light" else self.palette_dark
+        Window.clearcolor = self.colors["background"]
+        for lbl in self.labels:
+            lbl.color = self.colors["text"]
+        self._update_board()
+
+    def compute_valid_moves(self):
+        self.valid_moves = []
+        for dx, dy in MOVIMIENTOS_CABALLO:
+            nx = self.pos_x + dx
+            ny = self.pos_y + dy
+            if 0 <= nx < self.nivel and 0 <= ny < self.nivel and self.tablero[ny][nx] == -1:
+                self.valid_moves.append((nx, ny))
+
     def _update_board(self, *args):
-        # calcular tablero cuadrado centrado dentro del widget
         w, h = self.width, self.height
         board_size = min(w, h)
-        self.board_size = board_size
+        self.cell_size = board_size / self.nivel
         origin_x = self.x + (w - board_size) / 2
         origin_y = self.y + (h - board_size) / 2
-        self.board_origin = (origin_x, origin_y)
-        if self.nivel > 0:
-            self.cell_size = board_size / self.nivel
-        else:
-            self.cell_size = 0
 
-        # dibujar fondo, celdas y resaltos en canvas (esto queda debajo de widgets hijos)
-        self.canvas.clear()
-        with self.canvas:
+        self.canvas.before.clear()
+        with self.canvas.before:
             Color(*self.colors["background"])
             Rectangle(pos=(origin_x, origin_y), size=(board_size, board_size))
 
-            # celdas
             for row in range(self.nivel):
                 for col in range(self.nivel):
                     x = origin_x + col * self.cell_size
@@ -155,21 +113,19 @@ class BoardWidget(Widget):
                     if self.tablero[row][col] != -1:
                         Color(*self.colors["visited"])
                     else:
-                        # alternar color por celda
                         if (row + col) % 2 == 0:
                             Color(*self.colors["cell_light"])
                         else:
                             Color(*self.colors["cell_dark"])
                     Rectangle(pos=(x, y), size=(self.cell_size, self.cell_size))
 
-            # resaltar movimientos legales con borde
             Color(*self.colors["highlight"])
             for (nx, ny) in self.valid_moves:
                 x = origin_x + nx * self.cell_size
                 y = origin_y + (self.nivel - 1 - ny) * self.cell_size
                 Line(rectangle=(x + dp(2), y + dp(2), self.cell_size - dp(4), self.cell_size - dp(4)), width=dp(4))
 
-        # actualizar labels (texto, posición, tamaño y color)
+        # actualizar labels de números
         idx = 0
         for row in range(self.nivel):
             for col in range(self.nivel):
@@ -184,30 +140,25 @@ class BoardWidget(Widget):
                 lbl.color = self.colors["text"]
                 idx += 1
 
-        # ajustar tamaño y posición del knight (si es Image o Label)
-        self.update_knight_position_immediate(self.pos_x, self.pos_y)
-        try:
-            self.knight.canvas.ask_update()
-        except Exception:
-            pass
+        # actualizar posición y tamaño del caballo
+        ks = max(dp(24), self.cell_size * 0.8)
+        target_x = origin_x + self.pos_x * self.cell_size + (self.cell_size - ks) / 2
+        target_y = origin_y + (self.nivel - 1 - self.pos_y) * self.cell_size + (self.cell_size - ks) / 2
+        self.knight.pos = (target_x, target_y)
+        self.knight.size = (ks, ks)
 
-    def compute_valid_moves(self):
-        self.valid_moves = []
-        for dx, dy in MOVIMIENTOS_CABALLO:
-            nx = self.pos_x + dx
-            ny = self.pos_y + dy
-            if 0 <= nx < self.nivel and 0 <= ny < self.nivel and self.tablero[ny][nx] == -1:
-                self.valid_moves.append((nx, ny))
+        self.canvas.ask_update()
+        for lbl in self.labels:
+            lbl.canvas.ask_update()
+        self.knight.canvas.ask_update()
 
     def get_cell_at(self, x, y):
-        ox, oy = self.board_origin
-        bs = self.board_size
-        if bs <= 0:
+        origin_x, origin_y = self.x + (self.width - min(self.width, self.height)) / 2, self.y + (self.height - min(self.width, self.height)) / 2
+        board_size = min(self.width, self.height)
+        if not (origin_x <= x <= origin_x + board_size and origin_y <= y <= origin_y + board_size):
             return None
-        if x < ox or x > ox + bs or y < oy or y > oy + bs:
-            return None
-        local_x = x - ox
-        local_y = y - oy
+        local_x = x - origin_x
+        local_y = y - origin_y
         col = int(local_x // self.cell_size)
         row_from_bottom = int(local_y // self.cell_size)
         row = self.nivel - 1 - row_from_bottom
@@ -216,56 +167,39 @@ class BoardWidget(Widget):
         return None
 
     def on_touch_down(self, touch):
-        # solo manejar si toca dentro del área del tablero
         cell = self.get_cell_at(touch.x, touch.y)
         if not cell:
             return super().on_touch_down(touch)
         col, row = cell
         if (col, row) in self.valid_moves:
-            # movimiento legal: actualizar conteo y tablero
             self.movimiento_actual += 1
             self.tablero[row][col] = self.movimiento_actual
             self.visited.add((col, row))
-            # animar el caballo
             self.animate_knight_to(col, row)
         else:
-            # movimiento inválido: popup
             self.show_popup("Movimiento inválido", "No puedes mover ahí.")
         return True
 
-    def update_knight_position_immediate(self, col, row):
-        ox, oy = self.board_origin
-        ks = max(dp(24), self.cell_size * 0.8)
-        try:
-            self.knight.size = (ks, ks)
-        except Exception:
-            pass
-        target_x = ox + col * self.cell_size + (self.cell_size - ks) / 2
-        target_y = oy + (self.nivel - 1 - row) * self.cell_size + (self.cell_size - ks) / 2
-        self.knight.pos = (target_x, target_y)
-
     def animate_knight_to(self, col, row):
-        ox, oy = self.board_origin
+        ox, oy = self.knight.pos
         ks = max(dp(24), self.cell_size * 0.8)
-        target_x = ox + col * self.cell_size + (self.cell_size - ks) / 2
-        target_y = oy + (self.nivel - 1 - row) * self.cell_size + (self.cell_size - ks) / 2
+        origin_x = self.x + (self.width - min(self.width, self.height)) / 2
+        origin_y = self.y + (self.height - min(self.width, self.height)) / 2
+        target_x = origin_x + col * self.cell_size + (self.cell_size - ks) / 2
+        target_y = origin_y + (self.nivel - 1 - row) * self.cell_size + (self.cell_size - ks) / 2
         dist = abs(col - self.pos_x) + abs(row - self.pos_y)
         duration = max(0.06, 0.07 * dist)
         anim = Animation(pos=(target_x, target_y), duration=duration, t="out_quad")
 
         def _on_complete(animation, widget):
-            # actualizar posición lógica del caballo
             self.pos_x = col
             self.pos_y = row
-            # recalcular movimientos legales y redibujar
             self.compute_valid_moves()
             self._update_board()
             total = self.nivel * self.nivel
             if self.movimiento_actual == total - 1:
-                # nivel completado
                 self.show_level_completed()
             elif not self.valid_moves:
-                # fin del juego (no quedan movimientos legales)
                 self.show_game_over()
 
         anim.bind(on_complete=_on_complete)
@@ -305,22 +239,34 @@ class BoardWidget(Widget):
         hb.add_widget(b_exit)
         content.add_widget(hb)
         popup = Popup(title="¡Nivel completado!", content=content, size_hint=(None, None), size=(dp(380), dp(220)))
+
         def seguir(*a):
             popup.dismiss()
             self.nivel += 1
             self.rebuild_board()
+
         def salir(*a):
             popup.dismiss()
             App.get_running_app().stop()
+
         b_next.bind(on_release=seguir)
         b_exit.bind(on_release=salir)
         popup.open()
 
+    def rebuild_board(self):
+        # Resetear estado del tablero y movimientos
+        self.tablero = [[-1 for _ in range(self.nivel)] for _ in range(self.nivel)]
+        self.movimiento_actual = 0
+        self.pos_x = 0
+        self.pos_y = 0
+        self.tablero[self.pos_y][self.pos_x] = 0
+        self.visited = {(self.pos_x, self.pos_y)}
+        self.compute_valid_moves()
+        self._update_board()
 
 class GameRoot(BoxLayout):
     def __init__(self, **kwargs):
         super().__init__(orientation="vertical", **kwargs)
-        # barra superior con botones
         topbar = BoxLayout(size_hint=(1, None), height=dp(56), padding=dp(6), spacing=dp(6))
         self.btn_reiniciar = Button(text="🔄 Reiniciar nivel", size_hint=(None, 1), width=dp(160))
         self.btn_modo = Button(text="🌙 Modo Claro", size_hint=(None, 1), width=dp(160))
@@ -330,15 +276,12 @@ class GameRoot(BoxLayout):
 
         self.add_widget(topbar)
 
-        # área del tablero - ocupa el resto
         self.board = BoardWidget(nivel=5, size_hint=(1, 1))
         self.add_widget(self.board)
 
-        # Conexiones
         self.btn_reiniciar.bind(on_release=lambda *_: self.board.rebuild_board())
         self.btn_modo.bind(on_release=self.toggle_mode)
 
-        # aplicar modo inicial
         self.board.set_mode("dark")
 
     def toggle_mode(self, *a):
@@ -346,14 +289,10 @@ class GameRoot(BoxLayout):
         self.board.set_mode(new_mode)
         self.btn_modo.text = "☀️ Modo Oscuro" if new_mode == "light" else "🌙 Modo Claro"
 
-
 class TourCaballoApp(App):
     def build(self):
-        # ventana tamaño útil en PC (no afecta a Android)
         Window.size = (820, 860)
-        root = GameRoot()
-        return root
-
+        return GameRoot()
 
 if __name__ == "__main__":
     TourCaballoApp().run()
